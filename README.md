@@ -196,13 +196,17 @@ The update sequence matters:
 
 ### Scan Waves
 
-Authenticated scans are split into waves. Hypervisors, general Linux workloads, and mixed device groups are scanned in separate windows to reduce contention and avoid saturating shared links.
+Authenticated scans are split into waves with sufficient buffer time between them to prevent overlap. Hypervisors, general Linux workloads, and mixed device groups are scanned in separate windows to reduce contention and avoid saturating shared links.
 
-| Wave | Target group | Schedule pattern | Rationale |
-|------|--------------|------------------|-----------|
-| Wave 1 | Linux workloads and mixed endpoints | Weekly, early maintenance window | Covers the broadest device set first |
-| Wave 2 | Hypervisors and heavier infrastructure | Weekly, offset later | Avoids stacking intensive checks against critical hosts |
-| Discovery | Full subnet inventory | On demand or low-frequency | Useful for visibility without credentialed checks |
+| Wave | Target group | Schedule pattern | Concurrency | Rationale |
+|------|--------------|------------------|-------------|-----------|
+| Wave 1 | Linux workloads and mixed endpoints | Weekly, Sunday 01:00 AM local | max_hosts=20, max_checks=4 | Covers the broadest device set first; finishes by ~03:30 |
+| Wave 2 | Hypervisors and heavier infrastructure | Weekly, Sunday 05:00 AM local | max_hosts=10, max_checks=4 | Starts after Wave 1 finishes; avoids stacking intensive checks against critical hosts |
+| Discovery | Full subnet inventory | On demand only | max_hosts=30, max_checks=6 | Useful for visibility without credentialed checks; run manually when a subnet-wide picture is needed |
+
+The gap between Wave 1 (finishes ~03:30) and Wave 2 (starts 05:00) provides a 1.5-hour buffer. This avoids the overlap problems that occurred when waves were scheduled only 90 minutes apart while scans could run 2-4 hours.
+
+The full-subnet discovery task was intentionally removed from a daily schedule because it produced redundant data (weekly credentialed scans cover the same hosts with better results) and its 5+ hour runtime collided with scheduled waves.
 
 ### Report Export
 
@@ -286,6 +290,8 @@ Severity is stored as a JSON number rather than a string. This enables practical
 ### Scan Wave Scheduling To Avoid Bandwidth Saturation
 
 The lab has a diverse set of targets, and authenticated scans can be noisy. I split weekly scans into waves so infrastructure checks, Linux package checks, and mixed endpoint probes do not all compete for the same bandwidth and host resources at once. The result is a quieter maintenance window and fewer false operational signals from scan-induced load.
+
+Concurrency is tuned per-task based on target count and importance. Standard tasks run with `max_hosts=20` and `max_checks=4`, while the on-demand full-subnet discovery task is configured more aggressively at `max_hosts=30` and `max_checks=6`. These values were chosen to match the scanner VM's available resources (4 vCPUs, 8 GB RAM) without causing memory pressure or OOM conditions in the scanner engine.
 
 ### `flock` For Cron Idempotency
 
